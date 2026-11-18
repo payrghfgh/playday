@@ -2,6 +2,12 @@
 
 Every stage this thing went through, in order. Dates are when the build happened.
 
+## v2.6.0 — no demo data
+- A new install starts empty: no invented meetings, no sample tasks, no fake history. One list,
+  "My tasks", and the four default calendars — nothing else.
+- The empty states do the teaching instead: the momentum card says nothing is checked off yet, the
+  agenda says thirty quiet days, the task list says type above and press Enter.
+
 ## v2.5.0 — Firebase sync, config from env vars
 - Cloud sync is back, this time configured by environment variables: `build.js` turns `FIREBASE_*` into
   `config.js`, and with none set it writes `null` so the app stays local-only.

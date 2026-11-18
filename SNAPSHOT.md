@@ -1,4 +1,4 @@
-# Snapshot — v2.5.0 (Firebase sync from env vars)
+# Snapshot — v2.6.0 (ships empty)
 
 Where the project stands right now. If you come back in a month, read this first.
 

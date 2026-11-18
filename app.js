@@ -143,97 +143,17 @@
     if (typeof fbQueuePush === 'function') fbQueuePush();
   }
 
+  /* a new install starts empty — no invented meetings, no fake history */
   function seed() {
-    const t = TODAY_STR;
-    const d = n => ymd(addDays(TODAY, n));
-    const mk = (date, start, end, title, cal, extra) =>
-      Object.assign({ id: uid(), date, start, end, title, cal, where: '', notes: '', done: false }, extra || {});
-
-    return [
-      /* finished work — this is what fills the momentum bar */
-      mk(d(-4), '09:30', '09:45', 'Standup', 'work', { done: true }),
-      mk(d(-4), '16:00', '17:30', 'Ship v2.0 to staging', 'deep', { done: true, where: 'Studio' }),
-      mk(d(-3), '07:15', '08:00', 'Guitar practice', 'fun', { done: true }),
-      mk(d(-3), '19:00', '20:00', 'Dinner with Nikhil', 'life', { done: true, where: 'Bandra' }),
-      mk(d(-2), '07:00', '08:15', 'Long run — 8k', 'life', { done: true, where: 'Juhu beach' }),
-      mk(d(-1), '09:30', '09:45', 'Standup', 'work', { done: true }),
-      mk(d(-1), '21:00', '21:30', 'Read 20 pages', 'life', { done: true }),
-      mk(d(-1), '11:00', '12:30', 'Pricing page rewrite', 'deep', { done: true }),
-
-      /* today */
-      mk(t, '09:30', '09:45', 'Standup', 'work', { done: true }),
-      mk(t, '11:00', '12:00', 'Design review — Playday v1', 'work', { where: 'Studio, 3rd floor' }),
-      mk(t, '13:00', '13:40', 'Lunch away from the desk', 'life'),
-      mk(t, '14:00', '16:00', 'Deep work: onboarding flow', 'deep', { notes: 'Phone in the drawer. Three screens max.' }),
-      mk(t, '17:30', '18:15', 'Chai with Ananya', 'life', { where: 'Kala Ghoda' }),
-      mk(t, '20:00', '21:00', 'Badminton', 'fun'),
-
-      /* rest of the week */
-      mk(d(1), '10:00', '11:00', 'Sprint planning', 'work'),
-      mk(d(1), '15:00', '15:30', '1:1 with Meera', 'work', { where: 'Call' }),
-      mk(d(1), '18:30', '19:30', 'Gym — push day', 'life'),
-      mk(d(2), '16:00', '17:00', 'Dentist', 'life', { where: 'Dr. Rao, Colaba' }),
-      mk(d(2), '19:30', '21:00', 'Sketch club', 'fun'),
-      mk(d(3), '09:00', '12:00', 'Deep work: calendar sync', 'deep'),
-      mk(d(3), '17:00', '17:45', 'Weekly review', 'work'),
-      mk(d(3), '20:00', '22:30', 'Movie night — the loud one', 'fun', { where: 'Home' }),
-      mk(d(4), '11:00', '12:30', 'Prototype walkthrough', 'work'),
-      mk(d(5), '13:00', '15:00', 'Family lunch', 'life', { where: "Nani's place" }),
-      mk(d(5), '18:00', '19:00', 'Plan next week', 'work'),
-
-      /* next week */
-      mk(d(8), '09:30', '09:45', 'Standup', 'work'),
-      mk(d(8), '14:00', '15:30', 'Interview: frontend', 'work'),
-      mk(d(9), '07:00', '08:00', 'Long run — 10k', 'life'),
-      mk(d(10), '10:00', '12:00', 'Design sprint: empty states', 'deep'),
-      mk(d(11), '19:00', '21:00', 'Board game night', 'fun'),
-      mk(d(12), '11:00', '13:00', 'Quarterly offsite', 'work', { where: 'Alibaug' }),
-
-      /* earlier in the month + last month, so the mini calendar has texture */
-      mk(d(-9), '10:00', '11:00', 'Roadmap sync', 'work', { done: true }),
-      mk(d(-11), '20:00', '22:00', 'Concert at the mills', 'fun', { done: true }),
-      mk(d(-15), '09:00', '13:00', 'Offsite workshop', 'work', { done: true }),
-      mk(d(-21), '18:00', '19:00', 'Dentist', 'life', { done: true }),
-      mk(d(-34), '12:00', '13:00', 'Team lunch', 'work', { done: true }),
-      mk(d(-40), '16:00', '17:00', 'Book club', 'fun', { done: true })
-    ];
+    return [];
   }
 
   function seedLists() {
-    return [
-      { id: 'l1', name: 'My tasks', color: '#3B5BFF' },
-      { id: 'l2', name: 'Work', color: '#7B68FF' },
-      { id: 'l3', name: 'Groceries & home', color: '#2EE6A8' }
-    ];
+    return [{ id: 'l1', name: 'My tasks', color: '#3B5BFF' }];
   }
 
   function seedTasks() {
-    const t = TODAY_STR;
-    const d = n => ymd(addDays(TODAY, n));
-    const mk = (list, title, extra) => Object.assign(
-      { id: uid(), list, title, notes: '', due: null, starred: false, done: false, doneAt: null, created: Date.now() },
-      extra || {}
-    );
-    return [
-      mk('l1', 'Send the invoice to Karan', { due: t, starred: true }),
-      mk('l1', 'Book the Goa tickets before prices move', { due: d(2), notes: 'Window seats, morning flight' }),
-      mk('l1', 'Reply to Meera about the offsite', { due: d(-1) }),
-      mk('l1', 'Water the plants', {}),
-      mk('l1', 'Renew the bike insurance', { due: d(9) }),
-      mk('l1', 'Clean the desk', { done: true, doneAt: Date.now() - 3600e3 }),
-      mk('l1', 'Pay the electricity bill', { done: true, doneAt: Date.now() - 26 * 3600e3 }),
-
-      mk('l2', 'Write the onboarding copy', { due: t, starred: true, notes: 'Three screens, no jargon.' }),
-      mk('l2', 'Review Aditya’s PR', { due: d(1) }),
-      mk('l2', 'Update the sprint board', {}),
-      mk('l2', 'Prep the demo for Friday', { due: d(3) }),
-      mk('l2', 'Kill the staging bug', { done: true, doneAt: Date.now() - 7200e3 }),
-
-      mk('l3', 'Milk, curd, coriander', {}),
-      mk('l3', 'Dish soap', {}),
-      mk('l3', 'Coffee beans — the dark one', { due: d(4) }),
-      mk('l3', 'Call the plumber', { due: d(-2), starred: true })
-    ];
+    return [];
   }
 
   const saved = load();
