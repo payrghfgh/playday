@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Playday</title>
+<link rel="icon" href="icons/icon-192.png" />
+<style>
+  html,body{height:100%;margin:0;background:#1A1157;color:#F7F1E6;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:grid;place-items:center;text-align:center}
+  a{color:#F7F1E6}
+  .c{max-width:30rem;padding:2rem}
+  h1{font-size:1.4rem;margin:0 0 .6rem}
+  p{color:#BBAFEA;line-height:1.55;margin:0 0 1.2rem}
+  .btn{display:inline-block;padding:.7rem 1.1rem;border-radius:14px;background:#3B5BFF;
+    color:#fff;text-decoration:none;font-weight:800;margin:0 .25rem}
+</style>
+</head>
+<body>
+  <div class="c">
+    <h1>That path doesn’t exist</h1>
+    <p>Playday lives at <strong>/calendar</strong> and <strong>/tasks</strong>. Taking you to the right place…</p>
+    <p><a class="btn" href="./calendar">Calendar</a><a class="btn" href="./tasks">Tasks</a></p>
+  </div>
+  <script>
+    /* hosts without rewrites (GitHub Pages) land here: send them to the app
+       with the mode in the query string, which every build understands */
+    (function () {
+      var p = location.pathname.toLowerCase();
+      var mode = /\/tasks\/?$/.test(p) ? 'tasks' : (/\/cal(endar)?\/?$/.test(p) ? 'calendar' : '');
+      if (mode) location.replace('./app.html?mode=' + mode);
+    })();
+  </script>
+</body>
+</html>

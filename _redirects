@@ -1,0 +1,5 @@
+# Pretty routes: the front page at /, the app on its own paths.
+/            /index.html   200
+/calendar    /app.html     200
+/cal         /app.html     200
+/tasks       /app.html     200
