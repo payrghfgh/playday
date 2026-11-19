@@ -2,6 +2,22 @@
 
 Every stage this thing went through, in order. Dates are when the build happened.
 
+## v3.0.5 — tasks sync properly
+- **Task lists get a Google twin**, the same way calendars do: `ensureGoogleTaskLists()` creates
+  `Playday · <name>` in Google for any local list without one, on first connect and again on each sync
+  if you add a list later. Before this, tasks had no Google list to live in, so nothing synced.
+- **Tasks made before their list had a twin are adopted** — `adoptLocalTasks()` stamps `gtl`, `src` and
+  `dirty` so they upload on the next pass instead of staying local forever.
+- **`gtid` is now persisted after a push.** It was only living in memory, so a reload lost it and the
+  next sync created a duplicate of the same task in Google.
+- A local list is no longer renamed to the `Playday · ` title we just gave its Google twin.
+
+## v3.0.4 — a rejected API key cannot break a request
+- If a request comes back with `API_KEY_INVALID` / "API key not valid", the key is dropped and the same
+  request is retried once without it. OAuth is sufficient on its own, so a restricted key, a key from
+  another project, or a stale key now costs nothing instead of failing sign-in.
+- Reminder: neither API key is required. Leave both blank unless you have a reason.
+
 ## v3.0.3 — the sign-in gate says why it failed
 - `googleSyncNow` records the failure in `state.google.lastError`; the gate now shows that instead of a
   generic "did not finish connecting", and repeats it when you come back to the gate.

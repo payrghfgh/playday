@@ -2857,11 +2857,19 @@
     noteCall();
     const token = await googleToken(false);
     const calKey = window.__GOOGLE_CAL_API ? (path.indexOf('?') === -1 ? '?key=' : '&key=') + encodeURIComponent(window.__GOOGLE_CAL_API) : '';
-    const res = await fetch('https://www.googleapis.com/calendar/v3' + path + calKey, {
+    const calOpts = {
       method: opts.method || 'GET',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: opts.body
-    });
+    };
+    let res = await fetch('https://www.googleapis.com/calendar/v3' + path + calKey, calOpts);
+    if (!res.ok && calKey) {
+      // a restricted or wrong-project key answers API_KEY_INVALID; OAuth alone is enough
+      const peek = await res.clone().json().catch(() => null);
+      if (peek && JSON.stringify(peek).match(/API key not valid|API_KEY_INVALID|keyInvalid/i)) {
+        res = await fetch('https://www.googleapis.com/calendar/v3' + path, calOpts);
+      }
+    }
     if (res.status === 401) {
       googleAccessToken = null;
       googleTokenExpiry = 0;
@@ -2924,11 +2932,18 @@
     noteCall();
     const token = await googleToken(false);
     const tasksKey = window.__GOOGLE_TASKS_API ? (path.indexOf('?') === -1 ? '?key=' : '&key=') + encodeURIComponent(window.__GOOGLE_TASKS_API) : '';
-    const res = await fetch('https://tasks.googleapis.com/tasks/v1' + path + tasksKey, {
+    const tasksOpts = {
       method: opts.method || 'GET',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: opts.body
-    });
+    };
+    let res = await fetch('https://tasks.googleapis.com/tasks/v1' + path + tasksKey, tasksOpts);
+    if (!res.ok && tasksKey) {
+      const peek = await res.clone().json().catch(() => null);
+      if (peek && JSON.stringify(peek).match(/API key not valid|API_KEY_INVALID|keyInvalid/i)) {
+        res = await fetch('https://tasks.googleapis.com/tasks/v1' + path, tasksOpts);
+      }
+    }
     if (res.status === 401) {
       googleAccessToken = null;
       googleTokenExpiry = 0;
@@ -3167,10 +3182,47 @@
         };
         state.lists.push(list);
       }
-    } else if (!list.dirtyName && gtl.title && list.name !== gtl.title) {
+    } else if (!list.dirtyName && gtl.title && list.name !== gtl.title &&
+               gtl.title !== 'Playday · ' + list.name) {
       list.name = gtl.title;
     }
     return list;
+  }
+
+  /* the mirror of ensureGoogleCalendars: give every Playday list a Google list */
+  async function ensureGoogleTaskLists() {
+    if (!state.google.clientId || !state.google.tasksEnabled) return 0;
+    let created = 0;
+    for (const list of state.lists.slice()) {
+      if (list.gtl) continue;
+      try {
+        const body = await tFetch('/users/@me/lists', {
+          method: 'POST',
+          body: JSON.stringify({ title: 'Playday · ' + list.name })
+        });
+        if (body && body.id) { list.gtl = body.id; created++; }
+      } catch (err) {
+        syncStatus('Could not create the "' + list.name + '" task list in Google: ' + err.message, true);
+      }
+    }
+    if (created) save();
+    return created;
+  }
+
+  /* tasks made before their list had a Google twin move across too */
+  async function adoptLocalTasks() {
+    let moved = 0;
+    for (const t of state.tasks) {
+      if (t.gtid || t.src === 'gtasks') continue;
+      const list = state.lists.find(l => l.id === t.list);
+      if (!list || !list.gtl) continue;
+      t.src = 'gtasks';
+      t.gtl = list.gtl;
+      t.dirty = true;
+      moved++;
+    }
+    if (moved) { save(); await pushTaskQueue(); }
+    return moved;
   }
 
   async function pullGoogleTaskLists() {
@@ -3291,12 +3343,15 @@
         syncStatus('Could not rename list: ' + err.message, true);
       }
     }
+    if (pushed) save();   // the new gids only exist in memory until this
     return pushed;
   }
 
   async function syncGoogleTasks() {
     const g = state.google;
     if (!g.tasksEnabled) return { pulled: 0, pushed: 0 };
+    await ensureGoogleTaskLists();   // a list added since the last sync gets its Google twin
+    await adoptLocalTasks();
     await pullGoogleTaskLists();
     let pulled = 0;
     for (const gtl of g.taskLists.filter(l => l.selected !== false)) {
@@ -3311,7 +3366,7 @@
     const list = state.lists.find(l => l.id === t.list);
     if (!list || !list.gtl) return;
     if (!hasFreshToken()) return; // queued for the next sync
-    pushTask(t).catch(err => {
+    pushTask(t).then(() => save()).catch(err => {   // the new gid has to be persisted
       t.dirty = true;
       save();
       syncStatus('Saved here — Google Tasks push failed (' + err.message + ')', true);
@@ -3349,6 +3404,9 @@
         const made = await ensureGoogleCalendars();
         if (made) toast('Created ' + made + ' calendar' + (made === 1 ? '' : 's') + ' in Google');
         await adoptLocalEvents();
+        const madeLists = await ensureGoogleTaskLists();
+        if (madeLists) toast('Created ' + madeLists + ' task list' + (madeLists === 1 ? '' : 's') + ' in Google');
+        await adoptLocalTasks();
       }
       if (!g.calendars.length) {
         g.calendars = items.map(c => ({

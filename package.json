@@ -1,6 +1,6 @@
 {
   "name": "playday",
-  "version": "3.0.3",
+  "version": "3.0.5",
   "private": true,
   "description": "Playday \u2014 a calendar and task list that doesn't feel like homework.",
   "scripts": {
