@@ -2,6 +2,55 @@
 
 Every stage this thing went through, in order. Dates are when the build happened.
 
+## v3.0.2 — docs lead with publishing, not test users
+- README and the Google panel now say **publish the app** (Auth Platform → Audience) as the way to open
+  it up, with *Testing* described as the 100-user alternative rather than the default.
+
+## v3.0.1 — optional API keys, and the daily cap fixed
+- `GOOGLE_CAL_API` and `GOOGLE_TASKS_API` are read at build time and, when set, sent as `?key=` on their
+  API. Neither is required for OAuth calls — keys are project-wide, not per-API — but they attribute
+  quota to the project if you have them.
+- `build.js` was still defaulting the daily cap to 4,000 while the app expected 8,000; both agree now.
+
+## v3.0.0 — Google is the backend
+- Firebase is gone: no accounts, no Firestore, no email/password. One credential (`GOOGLE_CLIENT_ID`),
+  one sign-in, and the calendars themselves are the storage.
+- On first sign-in the app **creates one Google calendar per Playday calendar** and moves this device's
+  events into them, so two-way sync covers all four calendars instead of only Google's own.
+- Events are routed to their calendar's Google copy on create and on edit; pulls land back on the
+  Playday calendar rather than inventing a duplicate.
+- **Sign-in gate**: with a Client ID configured, the app asks you to sign in before it opens, with an
+  "use it offline for now" escape.
+- Polling every minute while the tab is visible, plus on focus. Daily call cap raised to 8,000 to suit it.
+
+## v2.6.8 — the Google Client ID can come from the build
+- `GOOGLE_CLIENT_ID` is written into `config.js` by `build.js` and used as the default, so a device no
+  longer needs it pasted into Settings. When it comes from the build the field is locked and says why.
+- No API key and no client secret are involved anywhere: Calendar and Tasks authorise with the OAuth
+  access token, and the popup flow needs neither.
+
+## v2.6.7 — call caps, tuned for limits Google has not published yet
+- Every Calendar **and Tasks** call passes a budget before it goes out: **120/min** and **4,000/day**
+  per browser, against Google's current 600/min and 1,000,000/day billing threshold. At the cap the app
+  stops calling and pauses itself for 5 minutes, then 15, then an hour.
+- Both numbers are env vars — `PLAYDAY_CALLS_PER_MINUTE` and `PLAYDAY_CALLS_PER_DAY` — so when Google
+  publishes the Workspace standard tier later in 2026, raising them is a variable and a rebuild, not a patch.
+- A real `429` / `rateLimitExceeded` walks the same backoff ladder instead of retrying; a clean sync resets it.
+- The sync panel shows today's spend against the cap.
+- Also in this patch: v2.6.5's calendar-delete pencil and v2.6.6's disabled-API message.
+
+## v2.6.6 — a disabled API reads like a sentence
+- When Google returns `SERVICE_DISABLED` (the Calendar or Tasks API switched off in the Cloud project),
+  the app now names the API, prints the activation link from Google's own response, and says no redeploy
+  is needed — instead of pasting Google's paragraph into the status line.
+- Tasks and Calendar are told apart, so the second failure does not look like the first.
+
+## v2.6.5 — deleting a calendar is findable
+- Every calendar you own gets a pencil on its row, revealed on hover and always visible on touch.
+  Before this the only way in was clicking the calendar's *name*, which nothing advertised.
+- The editor it opens carries **Delete calendar** with a two-tap confirm that names the cost
+  ("Delete and remove 7 events"), keeps at least one calendar, and is undoable with `Cmd/Ctrl+Z`.
+
 ## v2.6.4 — the Firebase SDK is self-hosted
 - `build.js` now downloads `firebase-app.js`, `firebase-auth.js` and `firebase-firestore.js` into
   `vendor/` when a config is present, and the app imports them from its own origin. Nothing is fetched

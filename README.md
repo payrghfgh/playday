@@ -148,53 +148,35 @@ with an optional **Until**. Occurrences are generated for the visible range, so 
 day and agenda all show them without storing hundreds of copies. Opening any occurrence opens the
 series and says so; changes and deletes apply to the whole series.
 
-## Sync across devices (optional, Firebase)
+## How sync works
 
-Playday needs no account. With a Firebase project wired in, an email and password carry your events and
-tasks between every device you sign in on.
+There is no Playday backend. **Your calendars are Google calendars**, so Google is the sync:
 
-**The config comes from environment variables**, so nothing is hardcoded:
+- On first sign-in the app creates one Google calendar per Playday calendar (`Playday · Work`,
+  `Playday · Deep work`, …) and moves anything already on the device into them.
+- Every event you make or edit is written to its Google calendar; every task goes to a Google task list.
+- Each device signs in, pulls with a `syncToken` (incremental, so a sync is a couple of requests) and
+  writes back. Two-way, including deletes.
+- Polling is **every minute while the tab is visible**, and immediately when you come back to it.
+  Google's push notifications need a public webhook endpoint, which would mean running a server — so
+  this is polling, not instant. If two devices disagree inside the same minute, the last write wins.
+- Signing in is required once `GOOGLE_CLIENT_ID` is configured. With no Client ID the app stays
+  local-only and says so.
 
-| Env var | Firebase key |
+### Configuration
+
+One env var for Google, two optional caps:
+
+| Env var | Purpose |
 | --- | --- |
-| `FIREBASE_API_KEY` | `apiKey` |
-| `FIREBASE_AUTH_DOMAIN` | `authDomain` |
-| `FIREBASE_PROJECT_ID` | `projectId` |
-| `FIREBASE_STORAGE_BUCKET` | `storageBucket` |
-| `FIREBASE_MESSAGING_SENDER_ID` | `messagingSenderId` |
-| `FIREBASE_APP_ID` | `appId` |
-| `FIREBASE_MEASUREMENT_ID` | `measurementId` (optional) |
+| `GOOGLE_CLIENT_ID` | the OAuth Web client — baked into `config.js` at build time |
+| `PLAYDAY_CALLS_PER_MINUTE` | call cap per browser, default 120 (Google allows 600) |
+| `PLAYDAY_CALLS_PER_DAY` | call cap per browser, default 8,000 (billing threshold 1,000,000) |
 
-`npm run build` runs `build.js`, which writes `config.js` with `window.__FIREBASE_CONFIG`. With no
-`FIREBASE_*` vars set it writes `null` and the app stays local-only — that's the file committed in the
-repo, so a plain clone works with no build.
-
-Those values are **public by design** — every Firebase web app ships them to the browser. What protects
-your data is the Firestore rules:
-
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
-```
-
-Setup: create a project, add a **Web app**, enable **Authentication → Email/Password**, create a
-**Firestore** database, paste the rules, then set the env vars (Netlify: Site settings → Environment
-variables) and deploy. `netlify.toml` already runs `npm run build`.
-
-What syncs is **everything**: events, tasks, lists, calendars, `.ics` feeds, hidden-calendar choices and
-all settings. One document at `users/{uid}/state/main`. Writes go up 1.5s after you stop editing,
-tagged with a per-session id so a device ignores its own echo; changes from another device arrive live.
-The first sign-in on a device with data asks **upload what's here** or **start with an empty account**.
-
-Limits: one document means a ~1MB ceiling (roughly 5,000 events); whole-document writes mean two
-devices editing in the same second is last-write-wins; and `config.js` is deliberately never cached by
-the service worker.
+No API key and no client secret are used. Enable **Google Calendar API** and **Google Tasks API** in the
+Cloud project, add the site origin under *Authorised JavaScript origins*, and **publish** the OAuth app
+(Google Auth Platform → Audience → Publish app) so anyone can sign in. While it stays in *Testing* only
+listed test users can connect, capped at 100.
 
 ## Tasks
 
@@ -248,7 +230,8 @@ Client ID from your own Google Cloud project:
 
 1. [Create a project](https://console.cloud.google.com/projectcreate) and enable the **Google
    Calendar API**.
-2. **OAuth consent screen** → External → add your own address as a **test user**.
+2. **Google Auth Platform → Audience** → *External* → **Publish app**. (In *Testing* instead, only the
+   addresses you list as test users can sign in, up to 100.)
 3. **Credentials → Create credentials → OAuth client ID → Web application**. Add the page's origin
    (e.g. `http://localhost:8080`) to **Authorised JavaScript origins** *and* **Authorised redirect
    URIs**.

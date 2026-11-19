@@ -11,6 +11,8 @@ node_modules/
 dist/
 .env
 .env.*
+# ...but the template with empty placeholders belongs in the repo
+!.env.example
 
 # local screenshot dumps
 screenshots/

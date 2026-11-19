@@ -1,7 +1,7 @@
 /* Playday service worker — cache the shell, leave Google alone. */
 'use strict';
 
-const VERSION = 'playday-v8';
+const VERSION = 'playday-v15';
 const SHELL = [
   './',
   './index.html',

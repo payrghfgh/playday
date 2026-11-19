@@ -264,6 +264,23 @@
   </div>
 </div>
 
+<!-- the gate: nothing syncs until Google is connected -->
+<div class="lock" id="gateScreen" hidden>
+  <div class="lock-card gate-card">
+    <span class="brand-mark lock-mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="34" height="34"><rect x="1" y="1" width="30" height="30" rx="9" fill="#2B3BFF"/><rect x="6.5" y="8.5" width="19" height="16" rx="4.5" fill="#FFFDF7"/><rect x="6.5" y="8.5" width="19" height="5.5" rx="2.6" fill="#FF5A36"/><circle cx="11.5" cy="18.5" r="1.9" fill="#151223"/><circle cx="16" cy="18.5" r="1.9" fill="#151223"/><circle cx="20.5" cy="18.5" r="1.9" fill="#151223"/></svg>
+    </span>
+    <h1>Playday</h1>
+    <p class="lock-sub">Your calendars live in Google. Sign in to open them.</p>
+    <button class="btn btn-primary lock-go" id="gateSignIn">Sign in with Google</button>
+    <p class="form-error" id="gateError" role="alert" hidden></p>
+    <p class="sync-hint">Playday creates one Google calendar per Playday calendar the first time you sign in,
+      so events made here are real Google events.</p>
+    <button class="lock-reset" id="gateSkip">Use it offline for now</button>
+    <p class="sync-hint" id="gateNote" hidden>Offline — changes stay on this device until you sign in.</p>
+  </div>
+</div>
+
 <!-- calendar editor -->
 <div class="overlay" id="calOverlay" hidden>
   <div class="sheet sheet-cal" role="dialog" aria-modal="true" aria-labelledby="calSheetTitle">
@@ -372,46 +389,16 @@
 
       <section class="sync-block" id="accountBlock">
         <div class="sync-block-head">
-          <h3>Sync across devices</h3>
+          <h3>Your account</h3>
           <span class="sync-pill" id="fbPill">off</span>
         </div>
-        <p class="sync-copy">Playday works with no account at all. With a Firebase project wired up, an
-          email and password carry your events and tasks between every device you sign in on.</p>
-
-        <div class="fb-auth" id="fbAuth">
-          <label class="field">
-            <span>Email</span>
-            <input type="email" id="accEmail" autocomplete="username" placeholder="you@example.com" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span>Password</span>
-            <input type="password" id="accPass" autocomplete="current-password" placeholder="at least 6 characters" />
-          </label>
-          <div class="fb-actions">
-            <button class="btn btn-primary" id="accIn">Sign in</button>
-            <button class="btn" id="accUp">Create account</button>
-            <button class="btn btn-ghost btn-tiny" id="accReset">Forgot password?</button>
-          </div>
+        <p class="sync-copy">Playday keeps your calendars in Google, so the account you sign in with is the
+          account your events live in. Signing out stops syncing but leaves everything on this device.</p>
+        <div class="sync-row">
+          <button class="btn btn-primary fb-google" id="acctConnect">Sign in with Google</button>
+          <button class="btn btn-ghost" id="acctDisconnect" hidden>Sign out</button>
         </div>
-
-        <div class="sync-row" id="accOutRow" hidden>
-          <button class="btn btn-ghost" id="accOut">Sign out</button>
-          <button class="btn btn-mini" id="accSyncNow">Sync now</button>
-        </div>
-
-        <p class="form-error" id="accError" role="alert" hidden></p>
-        <p class="sync-status" id="fbStatus" role="status"></p>
-        <p class="sync-hint" id="fbNoConfig" hidden><b>Sync is off in this build.</b> No
-          <code>FIREBASE_*</code> env vars were present at build time, so there is no account system
-          here at all. The app works fine without it.</p>
-
-        <div class="sync-origin" id="fbOrigin" hidden>
-          <span class="sync-origin-label">Authorised domain must include</span>
-          <code id="fbOriginValue"></code>
-          <button class="btn btn-mini" id="fbOriginCopy" type="button">Copy</button>
-        </div>
-        <p class="sync-hint" id="fbNote" hidden>Everything syncs: events, tasks, lists, calendars, feeds and
-          settings. Writes go up 1.5s after you stop; changes from other devices arrive live.</p>
+        <p class="sync-status" id="acctStatus" role="status"></p>
       </section>
 
       <section class="sync-block">
@@ -488,7 +475,7 @@
             <li>Add this page's origin (<code id="originHint">http://localhost:8080</code>) to <b>Authorised JavaScript origins</b>. The popup flow needs no redirect URI, and no client secret.</li>
             <li>Copy the whole Client ID — it ends in <code>.apps.googleusercontent.com</code> — and paste it below. A new client can take a couple of minutes to start working.</li>
           </ol>
-          <p class="sync-warn">While the consent screen is in <b>Testing</b>, Google expires refresh sessions after 7 days and only test users can connect. Fine for a personal calendar; publish the app if you want it permanent.</p>
+          <p class="sync-warn">Publish the app (Google Auth Platform → Audience) so anyone can sign in. While it stays in <b>Testing</b>, only the addresses you list as test users can connect — up to 100 — and refresh sessions expire after 7 days.</p>
           <p class="sync-warn" id="originFileWarn" hidden><b>You are opening the file directly.</b> Google
             cannot authorise a <code>file://</code> page at all — run <code>npm run dev</code> and use
             <code>http://localhost:5173</code>, or use your deployed URL.</p>
@@ -497,6 +484,7 @@
           <span>OAuth Client ID</span>
           <input id="clientIdInput" placeholder="1234567890-abc123.apps.googleusercontent.com" autocomplete="off" spellcheck="false" />
         </label>
+        <p class="sync-hint" id="clientIdBaked" hidden>Set by <code>GOOGLE_CLIENT_ID</code> at build time — locked here on purpose. Change the env var and rebuild to use a different client.</p>
         <div class="sync-row">
           <button class="btn btn-primary" id="connectBtn">Connect &amp; sync</button>
           <button class="btn btn-ghost" id="syncNowBtn" hidden>Sync now</button>

@@ -140,7 +140,6 @@
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
     } catch (err) { /* storage full or blocked: the session still works */ }
-    if (typeof fbQueuePush === 'function') fbQueuePush();
   }
 
   /* a new install starts empty — no invented meetings, no fake history */
@@ -173,6 +172,7 @@
   });
   if (!Array.isArray(state.feeds)) state.feeds = [];
   if (!state.google || typeof state.google !== 'object') state.google = {};
+  if (!state.google.clientId && window.__GOOGLE_CLIENT_ID) state.google.clientId = window.__GOOGLE_CLIENT_ID;
   if (!Array.isArray(state.google.calendars)) state.google.calendars = [];
   if (!Array.isArray(state.google.taskLists)) state.google.taskLists = [];
   if (typeof state.google.tasksEnabled !== 'boolean') state.google.tasksEnabled = true;
@@ -826,6 +826,9 @@
         </button>
         <button class="cal-name" data-cal-edit="${editable ? c.id : ''}" ${editable ? '' : 'disabled'} title="${editable ? 'Edit ' + esc(c.name) : esc(c.name) + ' comes from Google or an .ics file'}">${esc(c.name)}</button>
         <span class="cal-count">${counts[c.id] || 0}</span>
+        ${editable ? `<button class="cal-more" data-cal-edit="${c.id}" aria-label="Edit or delete ${esc(c.name)}" title="Edit or delete">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 20h4l10-10-4-4L4 16v4z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M13.5 6.5l4 4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        </button>` : ''}
       </li>`;
     }).join('');
 
@@ -1221,9 +1224,10 @@
 
     if (editingId) {
       const e = state.events.find(x => x.id === editingId);
-      const wasGoogle = e.src === 'gapi';
+      const target = gcalFor(payload.cal);
+      const wasGoogle = e.src === 'gapi' || !!target;
       Object.assign(e, payload);
-      if (wasGoogle) { e.dirty = true; e.gcal = String(payload.cal).replace(/^g:/, ''); }
+      if (wasGoogle && target) { e.src = 'gapi'; e.dirty = true; e.gcal = target; }
       save();
       closeEditor();
       render();
@@ -1232,9 +1236,10 @@
       if (wasGoogle) googlePushSoon(e);
     } else {
       const ev = Object.assign({ id: uid() }, payload);
-      if (String(payload.cal).startsWith('g:')) {
+      const target = gcalFor(payload.cal);
+      if (target) {
         ev.src = 'gapi';
-        ev.gcal = String(payload.cal).slice(2);
+        ev.gcal = target;
         ev.dirty = true;
       }
       state.events.push(ev);
@@ -1866,7 +1871,6 @@
     dayStartSel.value = String(st.dayStart);
     dayEndSel.value = String(st.dayEnd);
     renderSkins();
-    if (typeof accRender === 'function') accRender();
     setTasksOnCal.checked = !!state.showTasks;
     setSound.checked = !!state.sound;
     const volRow = document.querySelector('.set-row-volume');
@@ -2794,10 +2798,66 @@
     });
   }
 
+  /* Google's Calendar limit is 10,000 req/min per project and 600/min per user,
+     with a 1,000,000/day billing threshold. We stay far below all three and say
+     so in the panel: a runaway loop can never turn into a bill. */
+  const LIMITS = window.__PLAYDAY_LIMITS || {};
+  /* Deliberately low. Google allows 600/min per user today and only bills above
+     1,000,000/day — but the Workspace tiering model lands later in 2026 and its
+     standard tier is not published yet. These sit far under anything plausible,
+     and both are env-overridable so a future change is a variable, not a patch. */
+  const CALL_CAP_MIN = Number(LIMITS.callsPerMinute) || 120;   // vs 600 allowed
+  const CALL_CAP_DAY = Number(LIMITS.callsPerDay) || 8000;     // vs 1,000,000 threshold
+
+  function callLog() {
+    if (!Array.isArray(state.google.calls)) state.google.calls = [];
+    return state.google.calls;
+  }
+
+  function callsInWindow(ms) {
+    const since = Date.now() - ms;
+    return callLog().filter(t => t > since).length;
+  }
+
+  function callBudget() {
+    const g = state.google;
+    if (g.pausedUntil && Date.now() < g.pausedUntil) {
+      const mins = Math.ceil((g.pausedUntil - Date.now()) / 60000);
+      const e = new Error('Sync paused for ' + mins + ' more minute' + (mins === 1 ? '' : 's') +
+        ' to stay inside the Google quota. Your data is safe; it will resume on its own.');
+      e.paused = true;
+      throw e;
+    }
+    const perMin = callsInWindow(60000);
+    const perDay = callsInWindow(86400000);
+    if (perMin >= CALL_CAP_MIN || perDay >= CALL_CAP_DAY) {
+      // back off rather than burst: 5 min, then 15, then an hour
+      g.pauseCount = (g.pauseCount || 0) + 1;
+      const wait = Math.min(60, 5 * Math.pow(3, g.pauseCount - 1));
+      g.pausedUntil = Date.now() + wait * 60000;
+      save();
+      const e = new Error('Sync paused for ' + wait + ' minutes — that is the safety cap that keeps this app ' +
+        'well under Google\'s quota. It resumes by itself.');
+      e.paused = true;
+      throw e;
+    }
+  }
+
+  function noteCall() {
+    const log = callLog();
+    log.push(Date.now());
+    const cutoff = Date.now() - 86400000;
+    while (log.length && log[0] < cutoff) log.shift();
+    save();
+  }
+
   async function gfetch(path, options) {
     const opts = options || {};
+    callBudget();
+    noteCall();
     const token = await googleToken(false);
-    const res = await fetch('https://www.googleapis.com/calendar/v3' + path, {
+    const calKey = window.__GOOGLE_CAL_API ? (path.indexOf('?') === -1 ? '?key=' : '&key=') + encodeURIComponent(window.__GOOGLE_CAL_API) : '';
+    const res = await fetch('https://www.googleapis.com/calendar/v3' + path + calKey, {
       method: opts.method || 'GET',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: opts.body
@@ -2812,12 +2872,47 @@
       err.gone = true;
       throw err;
     }
+    if (res.status === 429 || res.status === 403) {
+      let isQuota = res.status === 429;
+      try {
+        const peek = await res.clone().json();
+        const errs = (peek && peek.error && (peek.error.errors || peek.error.details)) || [];
+        if (JSON.stringify(errs).match(/rateLimitExceeded|quotaExceeded|userRateLimitExceeded/)) isQuota = true;
+      } catch (e) { /* body was not json */ }
+      if (isQuota) {
+        state.google.pauseCount = (state.google.pauseCount || 0) + 1;
+        const wait = Math.min(60, 5 * Math.pow(3, state.google.pauseCount - 1));
+        state.google.pausedUntil = Date.now() + wait * 60000;
+        save();
+        const e = new Error('Google is rate-limiting this project — pausing sync for ' + wait + ' minutes.');
+        e.paused = true;
+        throw e;
+      }
+    }
+
     if (!res.ok) {
       let message = res.status + ' ' + res.statusText;
+      let apiOff = null;
       try {
         const body = await res.json();
-        if (body && body.error && body.error.message) message = body.error.message;
+        const err = (body && body.error) || {};
+        if (err.message) message = err.message;
+        const details = err.details || [];
+        const reason = details.map(d => d && d.reason).filter(Boolean).join(' ');
+        if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(message) ||
+            /SERVICE_DISABLED|accessNotConfigured/.test(reason)) {
+          apiOff = (details.find(d => d && d.metadata && d.metadata.activationUrl) || {}).metadata || null;
+        }
       } catch (err) { /* keep the status text */ }
+
+      if (apiOff) {
+        const which = /tasks/i.test(path) ? 'Google Tasks API' : 'Google Calendar API';
+        const link = apiOff.activationUrl || 'https://console.cloud.google.com/apis/dashboard';
+        const e = new Error(which + ' is off in your Cloud project. Enable it at ' + link +
+          ' — then wait a couple of minutes and press Sync now. No redeploy needed.');
+        e.needsApi = true;
+        throw e;
+      }
       throw new Error(message);
     }
     return res.status === 204 ? null : res.json();
@@ -2825,8 +2920,11 @@
 
   async function tFetch(path, options) {
     const opts = options || {};
+    callBudget();
+    noteCall();
     const token = await googleToken(false);
-    const res = await fetch('https://tasks.googleapis.com/tasks/v1' + path, {
+    const tasksKey = window.__GOOGLE_TASKS_API ? (path.indexOf('?') === -1 ? '?key=' : '&key=') + encodeURIComponent(window.__GOOGLE_TASKS_API) : '';
+    const res = await fetch('https://tasks.googleapis.com/tasks/v1' + path + tasksKey, {
       method: opts.method || 'GET',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: opts.body
@@ -2901,8 +2999,59 @@
     });
   }
 
+  /* every Playday calendar can own a real Google calendar; events then live there */
+  function gcalFor(calId) {
+    const own = state.calendars.find(c => c.id === calId);
+    if (own && own.gcalId) return own.gcalId;
+    if (String(calId).indexOf('g:') === 0) return String(calId).slice(2);
+    return null;
+  }
+
+  function localCalFor(gcalId) {
+    const own = state.calendars.find(c => c.gcalId === gcalId);
+    return own ? own.id : 'g:' + gcalId;
+  }
+
+  async function ensureGoogleCalendars() {
+    if (!state.google.clientId) return 0;
+    let created = 0;
+    for (const cal of state.calendars.slice()) {
+      if (cal.gcalId) continue;
+      try {
+        const body = await gfetch('/calendars', {
+          method: 'POST',
+          body: JSON.stringify({ summary: 'Playday · ' + cal.name, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' })
+        });
+        if (body && body.id) {
+          cal.gcalId = body.id;
+          created++;
+        }
+      } catch (err) {
+        syncStatus('Could not create the "' + cal.name + '" calendar in Google: ' + err.message, true);
+      }
+    }
+    if (created) save();
+    return created;
+  }
+
+  /* events already on this device move into their calendar's Google copy */
+  async function adoptLocalEvents() {
+    let moved = 0;
+    for (const e of state.events) {
+      if (e.src === 'gapi') continue;
+      const g = gcalFor(e.cal);
+      if (!g) continue;
+      e.src = 'gapi';
+      e.gcal = g;
+      e.dirty = true;
+      moved++;
+    }
+    if (moved) { save(); await pushQueue(); }
+    return moved;
+  }
+
   function upsertGoogleEvent(cal, item) {
-    const calId = 'g:' + cal.id;
+    const calId = localCalFor(cal.id);
     const existing = state.events.find(e => e.src === 'gapi' && e.gid === item.id && e.gcal === cal.id);
     if (item.status === 'cancelled') {
       if (existing) state.events = state.events.filter(e => e !== existing);
@@ -3192,8 +3341,15 @@
     }
     try {
       await googleToken(!auto);
+      const firstConnect = !g.connected;
       const list = await gfetch('/users/me/calendarList?minAccessRole=reader&maxResults=250');
       const items = list.items || [];
+      if (firstConnect) {
+        // one real Google calendar per Playday calendar, then move this device's events into them
+        const made = await ensureGoogleCalendars();
+        if (made) toast('Created ' + made + ' calendar' + (made === 1 ? '' : 's') + ' in Google');
+        await adoptLocalEvents();
+      }
       if (!g.calendars.length) {
         g.calendars = items.map(c => ({
           id: c.id, summary: c.summary, backgroundColor: c.backgroundColor,
@@ -3294,7 +3450,12 @@
   function renderSyncPanel() {
     const g = state.google;
     const connected = !!(g.connected && g.calendars.length);
+    const baked = !!window.__GOOGLE_CLIENT_ID;
     clientIdInput.value = g.clientId || '';
+    clientIdInput.readOnly = baked;
+    clientIdInput.classList.toggle('is-baked', baked);
+    const bakedNote = document.getElementById('clientIdBaked');
+    if (bakedNote) bakedNote.hidden = !baked;
     apiPill.textContent = connected ? 'connected' : g.clientId ? 'ready' : 'not set up';
     apiPill.className = 'sync-pill' + (connected ? ' on' : '');
     connectBtn.hidden = connected;
@@ -3312,7 +3473,8 @@
       syncStatus('Google needs one tap to reconnect — auto-sync is paused until then.', true);
     } else if (connected) {
       syncStatus('Connected' + (g.auto ? ' · auto-sync every ' + (g.interval || 5) + ' min' : ' · manual') +
-        ' · ' + googleEventCount() + ' Google events · last sync ' + relTime(g.lastSync) + '.', false);
+        ' · ' + googleEventCount() + ' Google events · last sync ' + relTime(g.lastSync) +
+        ' · ' + callsInWindow(86400000) + ' calls today (cap ' + CALL_CAP_DAY.toLocaleString() + ').', false);
     } else if (g.lastError) {
       syncStatus(g.lastError, true);
     } else if (g.clientId) {
@@ -3427,7 +3589,7 @@
   });
   connectBtn.addEventListener('click', () => googleSyncNow());
   syncNowBtn.addEventListener('click', () => googleSyncNow());
-  disconnectBtn.addEventListener('click', () => {
+  function disconnectGoogle() {
     state.google = { clientId: state.google.clientId, calendars: [], lastSync: null, connected: false };
     googleAccessToken = null;
     googleTokenExpiry = 0;
@@ -3436,9 +3598,11 @@
     save();
     stopAutoSync();
     render();
-    renderSyncPanel();
+    if (typeof renderSyncPanel === 'function') renderSyncPanel();
+    if (typeof acctRender === 'function') acctRender();
     toast('Disconnected from Google');
-  });
+  }
+  disconnectBtn.addEventListener('click', disconnectGoogle);
   document.getElementById('closeSync').addEventListener('click', closeSyncPanel);
   syncOverlay.addEventListener('click', ev => { if (ev.target === syncOverlay) closeSyncPanel(); });
   document.getElementById('exportBtn').addEventListener('click', downloadIcs);
@@ -3474,7 +3638,7 @@
   function startAutoSync() {
     stopAutoSync();
     if (state.google.auto && state.google.connected && state.google.calendars.length) {
-      const mins = Math.max(1, Number(state.google.interval) || 5);
+      const mins = Math.max(1, Number(state.google.interval) || 1);
       autoTimer = setInterval(() => maybeAutoSync('timer'), mins * 60000);
     }
     if (!clockTimer) {
@@ -3537,310 +3701,93 @@
 
 
 
-  /* ============================ firebase sync ============================ */
-  /* Optional cloud sync. The config comes from window.__FIREBASE_CONFIG, which
-     build.js writes from env vars. Nothing here loads until you sign in. */
 
-  const FB_VERSION = '11.0.2';
-  const FB_BASE = 'https://www.gstatic.com/firebasejs/' + FB_VERSION + '/';
-  const FB_CFG = window.__FIREBASE_CONFIG || null;
-  /* prefer the self-hosted copy; fall back to Google's CDN if the build did not vendor it */
-  const FB_SOURCES = (window.__FIREBASE_VENDOR ? ['./vendor/', FB_BASE] : [FB_BASE]);
-  let fb = null;
-  let fbUnsub = null;
-  let fbPushTimer = null;
-  let fbApplying = false;
-  let fbQuiet = false;
-  const FB_CLIENT = 'c' + Math.random().toString(36).slice(2, 8);
+  const acctPill = document.getElementById('fbPill');
+  const acctStatusEl = document.getElementById('acctStatus');
 
-  const accEmailEl = document.getElementById('accEmail');
-  const accPassEl = document.getElementById('accPass');
-  const accErrorEl = document.getElementById('accError');
-  const accPill = document.getElementById('fbPill');
-  const accStatusEl = document.getElementById('fbStatus');
-  const accAuthBox = document.getElementById('fbAuth');
-  const accOutRow = document.getElementById('accOutRow');
-  const fbNoConfig = document.getElementById('fbNoConfig');
-  const fbNote = document.getElementById('fbNote');
-  const mergeOverlay = document.getElementById('mergeOverlay');
-
-  const FB_ERRORS = {
-    'auth/invalid-email': 'That email address does not look right.',
-    'auth/missing-password': 'Type a password too.',
-    'auth/user-not-found': 'No account with that email on this project.',
-    'auth/wrong-password': 'That password does not match.',
-    'auth/invalid-credential': 'Email or password is wrong.',
-    'auth/invalid-login-credentials': 'Email or password is wrong.',
-    'auth/email-already-in-use': 'That email already has an account — sign in instead.',
-    'auth/weak-password': 'Passwords need at least 6 characters.',
-    'auth/too-many-requests': 'Too many attempts. Wait a minute and try again.',
-    'auth/operation-not-allowed': 'Email/Password sign-in is off in your Firebase project.',
-    'auth/network-request-failed': 'No network — try again when you are back.',
-    'auth/unauthorized-domain': 'This domain is not authorised in your Firebase project. Add it under Authentication → Settings → Authorized domains.',
-    'auth/configuration-not-found': 'Email/Password sign-in is not enabled in your Firebase project.',
-    'auth/api-key-not-valid': 'The Firebase apiKey in this build is not valid — check FIREBASE_API_KEY.',
-    'auth/invalid-api-key': 'The Firebase apiKey in this build is not valid — check FIREBASE_API_KEY.',
-    'auth/app-not-authorized': 'This domain is not authorised for this Firebase app.',
-    'auth/internal-error': 'Firebase returned an internal error — usually a bad config value.'
-  };
-
-  function accError(msg) {
-    accErrorEl.textContent = msg;
-    accErrorEl.hidden = false;
-    play('error');
-  }
-  function fbNiceError(err) {
-    const code = err && err.code ? err.code : '';
-    return FB_ERRORS[code] || (err && err.message ? err.message : 'Something went wrong.');
-  }
-
-  async function fbLoad() {
-    if (fb) return fb;
-    if (!FB_CFG) throw new Error('No Firebase config in this build.');
-
-    let mods = null;
-    let lastErr = null;
-    for (const base of FB_SOURCES) {
-      try {
-        mods = await Promise.all([
-          import(base + 'firebase-app.js'),
-          import(base + 'firebase-auth.js'),
-          import(base + 'firebase-firestore.js')
-        ]);
-        break;
-      } catch (err) {
-        lastErr = err;
-        if (window.console && console.warn) console.warn('firebase sdk: could not load from ' + base, err);
-      }
-    }
-    if (!mods) {
-      const where = FB_SOURCES[0].indexOf('http') === 0 ? 'Google\'s servers (gstatic.com)' : 'this site\'s vendor/ folder';
-      throw new Error('Could not load the Firebase SDK from ' + where + '. That is a blocked request, not a wrong password — ' +
-        'turn off any ad or tracker blocker for this site (Brave Shields, uBlock, AdGuard), or try a private window. ' +
-        'The app works without sync in the meantime.');
-    }
-    const [appMod, authMod, fsMod] = mods;
-    const app = appMod.initializeApp(FB_CFG);
-    fb = { app, auth: authMod.getAuth(app), db: fsMod.getFirestore(app), A: authMod, F: fsMod };
-    authMod.onAuthStateChanged(fb.auth, user => {
-      state.account = user ? { uid: user.uid, email: user.email || '' } : null;
-      save();
-      accRender();
-      if (user) fbStart(); else fbStop();
-    });
-    return fb;
-  }
-
-  const fbDoc = () => fb.F.doc(fb.db, 'users', state.account.uid, 'state', 'main');
-
-  function fbPayload() {
-    return {
-      writer: FB_CLIENT,
-      updatedAt: Date.now(),
-      events: state.events,
-      tasks: state.tasks,
-      lists: state.lists,
-      calendars: state.calendars,
-      feeds: state.feeds,
-      hidden: state.hidden,
-      settings: state.settings,
-      sound: state.sound,
-      showTasks: state.showTasks
-    };
-  }
-
-  function fbMerge(remote) {
-    const ids = k => new Set((state[k] || []).map(x => x.id));
-    const add = (k, list) => {
-      const seen = ids(k);
-      const extra = (list || []).filter(x => !seen.has(x.id));
-      state[k] = state[k].concat(extra);
-      return extra.length;
-    };
-    return add('events', remote.events) + add('tasks', remote.tasks) +
-      add('lists', remote.lists) + add('calendars', remote.calendars);
-  }
-
-  function fbApply(remote) {
-    if (!remote || fbApplying) return;
-    fbApplying = true;
-    try {
-      if (Array.isArray(remote.events)) state.events = remote.events;
-      if (Array.isArray(remote.tasks)) state.tasks = remote.tasks;
-      if (Array.isArray(remote.lists) && remote.lists.length) state.lists = remote.lists;
-      if (Array.isArray(remote.calendars) && remote.calendars.length) state.calendars = remote.calendars;
-      if (Array.isArray(remote.feeds)) state.feeds = remote.feeds;
-      if (Array.isArray(remote.hidden)) state.hidden = remote.hidden;
-      if (remote.settings) state.settings = remote.settings;
-      if (typeof remote.sound === 'boolean') state.sound = remote.sound;
-      if (typeof remote.showTasks === 'boolean') state.showTasks = remote.showTasks;
-      fbQuiet = true;
-      save();
-      fbQuiet = false;
-      render();
-      accRender();
-    } finally {
-      fbApplying = false;
+  function acctRender() {
+    if (!acctPill) return;
+    const on = !!state.google.connected;
+    acctPill.textContent = on ? 'on' : (state.google.clientId ? 'ready' : 'off');
+    acctPill.className = 'sync-pill' + (on ? ' on' : (state.google.clientId ? ' ready' : ''));
+    const connect = document.getElementById('acctConnect');
+    const out = document.getElementById('acctDisconnect');
+    if (connect) connect.hidden = on || !state.google.clientId;
+    if (out) out.hidden = !on;
+    if (acctStatusEl) {
+      acctStatusEl.textContent = on
+        ? 'Signed in — ' + googleEventCount() + ' Google events · last sync ' + relTime(state.google.lastSync)
+        : (state.google.clientId ? 'Not signed in. Nothing syncs until you do.' : 'No Google Client ID in this build.');
     }
   }
 
-  async function fbStart() {
-    if (!fb || !state.account) return;
-    if (fbUnsub) { fbUnsub(); fbUnsub = null; }
-    try {
-      const snap = await fb.F.getDoc(fbDoc());
-      const localHasData = state.events.length > 0 || state.tasks.length > 0;
-      if (!snap.exists() && localHasData) {
-        if (typeof closeSettings === 'function') closeSettings();
-        mergeOverlay.hidden = false;
-        document.getElementById('mergeUpload').onclick = () => {
-          mergeOverlay.hidden = true;
-          fbPushNow().then(() => toast('Uploaded this device into your account'));
-        };
-        document.getElementById('mergeEmpty').onclick = () => {
-          mergeOverlay.hidden = true;
-          fbPushNow().then(() => toast('Starting empty — this device stays as it is'));
-        };
-      } else if (snap.exists()) {
-        const added = fbMerge(snap.data());
-        save();
-        render();
-        if (added) toast('Pulled ' + added + ' item' + (added === 1 ? '' : 's') + ' from your account');
-        await fbPushNow();
-      } else {
-        await fbPushNow();
-      }
-      fbUnsub = fb.F.onSnapshot(fbDoc(), doc => {
-        if (!doc.exists()) return;
-        const data = doc.data();
-        if (data.writer === FB_CLIENT) return;
-        fbApply(data);
-      }, err => accError('Live sync stopped: ' + err.message));
-    } catch (err) {
-      accError('Could not read your account: ' + err.message);
+  /* ============================== the gate ============================== */
+  /* Sign in with Google to use the app: the calendars are the storage, so there
+     is nothing to sync to until Google is connected. */
+
+  const gateEl = document.getElementById('gateScreen');
+  const gateBtn = document.getElementById('gateSignIn');
+  const gateErr = document.getElementById('gateError');
+  const gateNote = document.getElementById('gateNote');
+
+  function gateNeeded() {
+    if (!state.google.clientId) return false;          // nothing configured: stay usable offline
+    if (state.google.connected) return false;
+    if (sessionStorage.getItem('playday.gateSkipped') === '1') return false;
+    return true;
+  }
+
+  function showGate() {
+    if (!gateEl) return;
+    gateEl.hidden = !gateNeeded();
+  }
+
+  const acctConnectBtn = document.getElementById('acctConnect');
+  const acctOutBtn = document.getElementById('acctDisconnect');
+  if (acctConnectBtn) acctConnectBtn.addEventListener('click', async () => {
+    try { await googleSyncNow(); } catch (err) { syncStatus(err.message, true); }
+    acctRender();
+    showGate();
+    render();
+  });
+  if (acctOutBtn) acctOutBtn.addEventListener('click', () => {
+    disconnectGoogle();
+    acctRender();
+    showGate();
+    render();
+  });
+
+  if (gateEl) {
+    showGate();
+    if (gateBtn) {
+      gateBtn.addEventListener('click', async () => {
+        gateErr.hidden = true;
+        gateBtn.disabled = true;
+        gateBtn.textContent = 'Opening Google…';
+        try {
+          await googleSyncNow();
+          if (state.google.connected) {
+            gateEl.hidden = true;
+            render();
+          } else {
+            gateErr.textContent = 'Google did not finish connecting. Try again.';
+            gateErr.hidden = false;
+          }
+        } catch (err) {
+          gateErr.textContent = err && err.message ? err.message : 'Sign-in failed.';
+          gateErr.hidden = false;
+        } finally {
+          gateBtn.disabled = false;
+          gateBtn.textContent = 'Sign in with Google';
+        }
+      });
     }
-    accRender();
-  }
-
-  function fbStop() {
-    if (fbUnsub) { fbUnsub(); fbUnsub = null; }
-    if (fbPushTimer) { clearTimeout(fbPushTimer); fbPushTimer = null; }
-    accRender();
-  }
-
-  async function fbPushNow() {
-    if (!fb || !state.account) return;
-    try {
-      await fb.F.setDoc(fbDoc(), fbPayload());
-      state.account.lastSync = Date.now();
-      fbQuiet = true;
-      save();
-      fbQuiet = false;
-      accRender();
-    } catch (err) {
-      accError('Could not save to your account: ' + err.message);
-    }
-  }
-
-  function fbQueuePush() {
-    if (fbQuiet || !state.account || !fb) return;
-    if (fbPushTimer) clearTimeout(fbPushTimer);
-    fbPushTimer = setTimeout(() => { fbPushTimer = null; fbPushNow(); }, 1500);
-  }
-
-  function accRender() {
-    if (!accPill) return;
-    const originBox = document.getElementById('fbOrigin');
-    const originVal = document.getElementById('fbOriginValue');
-    if (originBox) {
-      const live = /^https?:/.test(location.protocol);
-      originBox.hidden = !FB_CFG || !live;
-      if (originVal) originVal.textContent = location.origin;
-    }
-    const signedIn = !!(state.account && state.account.uid);
-    accPill.textContent = signedIn ? 'on' : (FB_CFG ? 'ready' : 'off');
-    accPill.className = 'sync-pill' + (signedIn ? ' on' : (FB_CFG ? ' ready' : ''));
-    accAuthBox.hidden = signedIn || !FB_CFG;
-    accOutRow.hidden = !signedIn;
-    fbNoConfig.hidden = !!FB_CFG;
-    fbNote.hidden = !signedIn;
-    if (signedIn) {
-      const when = state.account.lastSync ? ' · last sync ' + relTime(state.account.lastSync) : '';
-      accStatusEl.textContent = 'Signed in as ' + state.account.email + when;
-    } else if (FB_CFG) {
-      accStatusEl.textContent = 'Not signed in — everything stays on this device.';
-    } else {
-      accStatusEl.textContent = 'Sync is off in this build — the app works fine without it.';
-    }
-  }
-
-  async function fbEmailCreds() {
-    const email = (accEmailEl.value || '').trim();
-    const pass = accPassEl.value || '';
-    if (!email || email.indexOf('@') === -1) { accError('Type your email address first.'); accEmailEl.focus(); return null; }
-    if (!pass) { accError('Type your password too.'); accPassEl.focus(); return null; }
-    return { email, pass };
-  }
-
-  if (accPill) {
-    accErrorEl.hidden = true;
-
-    document.getElementById('accIn').addEventListener('click', async () => {
-      accErrorEl.hidden = true;
-      const creds = await fbEmailCreds();
-      if (!creds) return;
-      try {
-        const { auth, A } = await fbLoad();
-        await A.signInWithEmailAndPassword(auth, creds.email, creds.pass);
-        accPassEl.value = '';
-      } catch (err) { accError(fbNiceError(err)); }
+    const skip = document.getElementById('gateSkip');
+    if (skip) skip.addEventListener('click', () => {
+      sessionStorage.setItem('playday.gateSkipped', '1');
+      gateEl.hidden = true;
+      if (gateNote) gateNote.hidden = false;
     });
-
-    document.getElementById('accUp').addEventListener('click', async () => {
-      accErrorEl.hidden = true;
-      const creds = await fbEmailCreds();
-      if (!creds) return;
-      try {
-        const { auth, A } = await fbLoad();
-        await A.createUserWithEmailAndPassword(auth, creds.email, creds.pass);
-        accPassEl.value = '';
-      } catch (err) { accError(fbNiceError(err)); }
-    });
-
-    document.getElementById('accReset').addEventListener('click', async () => {
-      accErrorEl.hidden = true;
-      const email = (accEmailEl.value || '').trim();
-      if (!email || email.indexOf('@') === -1) { accError('Type your email first, then ask for a reset.'); return; }
-      try {
-        const { auth, A } = await fbLoad();
-        await A.sendPasswordResetEmail(auth, email);
-        toast('Reset link sent to ' + email);
-      } catch (err) { accError(fbNiceError(err)); }
-    });
-
-    document.getElementById('accOut').addEventListener('click', async () => {
-      if (!fb) return;
-      try { await fb.A.signOut(fb.auth); toast('Signed out — your data stays on this device'); }
-      catch (err) { accError(err.message); }
-    });
-
-    document.getElementById('accSyncNow').addEventListener('click', async () => {
-      await fbPushNow();
-      toast('Synced');
-    });
-
-    const copyBtn = document.getElementById('fbOriginCopy');
-    if (copyBtn) copyBtn.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(location.origin); copyBtn.textContent = 'Copied'; }
-      catch (e) { copyBtn.textContent = location.origin; }
-      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
-    });
-
-    [accEmailEl, accPassEl].forEach(el => el.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('accIn').click(); }
-    }));
-
-    accRender();
   }
 
   /* =============================== pwa =============================== */
