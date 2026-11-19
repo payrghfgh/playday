@@ -2741,6 +2741,10 @@
   async function googleToken(interactive) {
     if (hasFreshToken()) return googleAccessToken;
     if (!state.google.clientId) throw new Error('Paste your OAuth Client ID first.');
+    if (!/^[\w-]+\.apps\.googleusercontent\.com$/.test(state.google.clientId.trim())) {
+      throw new Error('That does not look like a Client ID — it should end in .apps.googleusercontent.com with no spaces. ' +
+        'If it is right, check the client type is "Web application": Desktop, Android and Chrome-extension clients all fail with invalid_client.');
+    }
     if (!interactive && silentFailures > 0) {
       throw new Error('Google needs one tap to reconnect.');
     }
@@ -2768,7 +2772,19 @@
             done = true;
             const code = err && (err.type || err.message);
             if (!interactive) silentFailures++;
-            reject(new Error(code === 'popup_closed' ? 'Sign-in window was closed.' : ('Sign-in failed: ' + (code || 'unknown error'))));
+            if (code === 'popup_closed') { reject(new Error('Sign-in window was closed.')); return; }
+            if (code === 'invalid_client') {
+              reject(new Error('Google does not recognise that Client ID. Re-copy it in full from Credentials, and make sure the ' +
+                'client type is "Web application" — Desktop, Android and Chrome-extension clients fail with exactly this error.'));
+              return;
+            }
+            if (code === 'origin_mismatch' || code === 'idpiframe_initialization_failed') {
+              reject(new Error('Google does not recognise this site for that Client ID. Add ' + location.origin +
+                ' under "Authorized JavaScript origins" in Google Cloud → Credentials.'));
+              return;
+            }
+            if (code === 'access_denied') { reject(new Error('Access was denied on the Google consent screen.')); return; }
+            reject(new Error('Sign-in failed: ' + (code || 'unknown error')));
           }
         });
         client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
@@ -3286,14 +3302,11 @@
     syncNowBtn.textContent = g.needsAuth ? 'Reconnect' : 'Sync now';
     disconnectBtn.hidden = !connected;
 
-    const hint = document.getElementById('originHint');
-    if (hint) {
-      const origin = location.protocol === 'file:' ? 'http://localhost:5173' : location.origin;
-      hint.textContent = origin;
-      if (location.protocol === 'file:') {
-        hint.textContent = origin + ' (this page is open from a file — serve it, or use the .ics import below)';
-      }
-    }
+    const originHintEl = document.getElementById('originHint');
+    const fileWarnEl = document.getElementById('originFileWarn');
+    const liveOrigin = /^https?:/.test(location.protocol);
+    if (originHintEl) originHintEl.textContent = liveOrigin ? location.origin : 'file:// — cannot be authorised';
+    if (fileWarnEl) fileWarnEl.hidden = liveOrigin;
 
     if (connected && g.needsAuth) {
       syncStatus('Google needs one tap to reconnect — auto-sync is paused until then.', true);
@@ -3531,6 +3544,8 @@
   const FB_VERSION = '11.0.2';
   const FB_BASE = 'https://www.gstatic.com/firebasejs/' + FB_VERSION + '/';
   const FB_CFG = window.__FIREBASE_CONFIG || null;
+  /* prefer the self-hosted copy; fall back to Google's CDN if the build did not vendor it */
+  const FB_SOURCES = (window.__FIREBASE_VENDOR ? ['./vendor/', FB_BASE] : [FB_BASE]);
   let fb = null;
   let fbUnsub = null;
   let fbPushTimer = null;
@@ -3560,7 +3575,13 @@
     'auth/weak-password': 'Passwords need at least 6 characters.',
     'auth/too-many-requests': 'Too many attempts. Wait a minute and try again.',
     'auth/operation-not-allowed': 'Email/Password sign-in is off in your Firebase project.',
-    'auth/network-request-failed': 'No network — try again when you are back.'
+    'auth/network-request-failed': 'No network — try again when you are back.',
+    'auth/unauthorized-domain': 'This domain is not authorised in your Firebase project. Add it under Authentication → Settings → Authorized domains.',
+    'auth/configuration-not-found': 'Email/Password sign-in is not enabled in your Firebase project.',
+    'auth/api-key-not-valid': 'The Firebase apiKey in this build is not valid — check FIREBASE_API_KEY.',
+    'auth/invalid-api-key': 'The Firebase apiKey in this build is not valid — check FIREBASE_API_KEY.',
+    'auth/app-not-authorized': 'This domain is not authorised for this Firebase app.',
+    'auth/internal-error': 'Firebase returned an internal error — usually a bad config value.'
   };
 
   function accError(msg) {
@@ -3576,11 +3597,29 @@
   async function fbLoad() {
     if (fb) return fb;
     if (!FB_CFG) throw new Error('No Firebase config in this build.');
-    const [appMod, authMod, fsMod] = await Promise.all([
-      import(FB_BASE + 'firebase-app.js'),
-      import(FB_BASE + 'firebase-auth.js'),
-      import(FB_BASE + 'firebase-firestore.js')
-    ]);
+
+    let mods = null;
+    let lastErr = null;
+    for (const base of FB_SOURCES) {
+      try {
+        mods = await Promise.all([
+          import(base + 'firebase-app.js'),
+          import(base + 'firebase-auth.js'),
+          import(base + 'firebase-firestore.js')
+        ]);
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (window.console && console.warn) console.warn('firebase sdk: could not load from ' + base, err);
+      }
+    }
+    if (!mods) {
+      const where = FB_SOURCES[0].indexOf('http') === 0 ? 'Google\'s servers (gstatic.com)' : 'this site\'s vendor/ folder';
+      throw new Error('Could not load the Firebase SDK from ' + where + '. That is a blocked request, not a wrong password — ' +
+        'turn off any ad or tracker blocker for this site (Brave Shields, uBlock, AdGuard), or try a private window. ' +
+        'The app works without sync in the meantime.');
+    }
+    const [appMod, authMod, fsMod] = mods;
     const app = appMod.initializeApp(FB_CFG);
     fb = { app, auth: authMod.getAuth(app), db: fsMod.getFirestore(app), A: authMod, F: fsMod };
     authMod.onAuthStateChanged(fb.auth, user => {
@@ -3711,6 +3750,13 @@
 
   function accRender() {
     if (!accPill) return;
+    const originBox = document.getElementById('fbOrigin');
+    const originVal = document.getElementById('fbOriginValue');
+    if (originBox) {
+      const live = /^https?:/.test(location.protocol);
+      originBox.hidden = !FB_CFG || !live;
+      if (originVal) originVal.textContent = location.origin;
+    }
     const signedIn = !!(state.account && state.account.uid);
     accPill.textContent = signedIn ? 'on' : (FB_CFG ? 'ready' : 'off');
     accPill.className = 'sync-pill' + (signedIn ? ' on' : (FB_CFG ? ' ready' : ''));
@@ -3781,6 +3827,13 @@
     document.getElementById('accSyncNow').addEventListener('click', async () => {
       await fbPushNow();
       toast('Synced');
+    });
+
+    const copyBtn = document.getElementById('fbOriginCopy');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(location.origin); copyBtn.textContent = 'Copied'; }
+      catch (e) { copyBtn.textContent = location.origin; }
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
     });
 
     [accEmailEl, accPassEl].forEach(el => el.addEventListener('keydown', ev => {

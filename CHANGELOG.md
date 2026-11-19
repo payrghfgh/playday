@@ -2,6 +2,35 @@
 
 Every stage this thing went through, in order. Dates are when the build happened.
 
+## v2.6.4 — the Firebase SDK is self-hosted
+- `build.js` now downloads `firebase-app.js`, `firebase-auth.js` and `firebase-firestore.js` into
+  `vendor/` when a config is present, and the app imports them from its own origin. Nothing is fetched
+  from `gstatic.com` at runtime, so ad blockers, Brave Shields, DNS filters and strict CSP can no longer
+  break sign-in. If the download fails the build still succeeds and the app falls back to the CDN.
+- A failed SDK load now says what it is: a blocked request, not a wrong password — and names the
+  blocker as the likely cause, with the app still usable without sync.
+
+## v2.6.3 — the origin Google wants, printed in the panel
+- The setup steps now show the **live** origin of the page you are on, ready to copy into Authorised
+  JavaScript origins — not a hardcoded example.
+- Opened from disk, the panel says plainly that a `file://` page cannot be authorised at all and points
+  at `npm run dev` / the deployed URL.
+
+## v2.6.2 — catch a bad Client ID before Google does
+- The Client ID is validated on the page: wrong shape or a stray space now says so instead of opening a
+  window that lands on "Access blocked: no registered origin / 401 invalid_client".
+- `invalid_client` gets its own sentence naming the usual cause — a client that is not type
+  **Web application**.
+- The setup steps now say plainly: choose Web application, add the origin only (no redirect URI), and
+  no client secret is involved.
+
+## v2.6.1 — say why auth failed
+- `auth/unauthorized-domain`, `auth/configuration-not-found`, `auth/api-key-not-valid`,
+  `auth/app-not-authorized` and `auth/internal-error` now read as sentences that name the fix.
+- The account block shows the exact origin to register, with a Copy button.
+- Google sign-in names the origin when the Client ID does not recognise the site
+  (`origin_mismatch`, `idpiframe_initialization_failed`, `invalid_client`, `access_denied`).
+
 ## v2.6.0 — no demo data
 - A new install starts empty: no invented meetings, no sample tasks, no fake history. One list,
   "My tasks", and the four default calendars — nothing else.

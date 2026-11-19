@@ -14,3 +14,6 @@ dist/
 
 # local screenshot dumps
 screenshots/
+
+# the firebase sdk, downloaded by build.js when FIREBASE_* is set
+vendor/

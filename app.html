@@ -401,8 +401,15 @@
 
         <p class="form-error" id="accError" role="alert" hidden></p>
         <p class="sync-status" id="fbStatus" role="status"></p>
-        <p class="sync-hint" id="fbNoConfig" hidden>No Firebase config in this build. Set the
-          <code>FIREBASE_*</code> env vars and rebuild, or paste a config — the app works fine without it.</p>
+        <p class="sync-hint" id="fbNoConfig" hidden><b>Sync is off in this build.</b> No
+          <code>FIREBASE_*</code> env vars were present at build time, so there is no account system
+          here at all. The app works fine without it.</p>
+
+        <div class="sync-origin" id="fbOrigin" hidden>
+          <span class="sync-origin-label">Authorised domain must include</span>
+          <code id="fbOriginValue"></code>
+          <button class="btn btn-mini" id="fbOriginCopy" type="button">Copy</button>
+        </div>
         <p class="sync-hint" id="fbNote" hidden>Everything syncs: events, tasks, lists, calendars, feeds and
           settings. Writes go up 1.5s after you stop; changes from other devices arrive live.</p>
       </section>
@@ -477,10 +484,14 @@
           <ol>
             <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noreferrer">Google Cloud Console</a>, create a project, then enable the <b>Google Calendar API</b> under APIs &amp; Services.</li>
             <li>Go to <b>APIs &amp; Services → OAuth consent screen</b>, choose <b>External</b>, and add your own Google address as a <b>test user</b>.</li>
-            <li>Under <b>Credentials → Create credentials → OAuth client ID</b>, pick <b>Web application</b> and add this page's origin (for example <code id="originHint">http://localhost:8080</code>) to both <b>Authorised JavaScript origins</b> and <b>Authorised redirect URIs</b>.</li>
-            <li>Copy the <b>Client ID</b> (ends in <code>.apps.googleusercontent.com</code>) into the field below.</li>
+            <li>Under <b>Credentials → Create credentials → OAuth client ID</b>, choose the application type <b>Web application</b> — not Desktop, Android or Chrome extension, which fail here with <code>invalid_client</code>.</li>
+            <li>Add this page's origin (<code id="originHint">http://localhost:8080</code>) to <b>Authorised JavaScript origins</b>. The popup flow needs no redirect URI, and no client secret.</li>
+            <li>Copy the whole Client ID — it ends in <code>.apps.googleusercontent.com</code> — and paste it below. A new client can take a couple of minutes to start working.</li>
           </ol>
           <p class="sync-warn">While the consent screen is in <b>Testing</b>, Google expires refresh sessions after 7 days and only test users can connect. Fine for a personal calendar; publish the app if you want it permanent.</p>
+          <p class="sync-warn" id="originFileWarn" hidden><b>You are opening the file directly.</b> Google
+            cannot authorise a <code>file://</code> page at all — run <code>npm run dev</code> and use
+            <code>http://localhost:5173</code>, or use your deployed URL.</p>
         </details>
         <label class="field">
           <span>OAuth Client ID</span>
