@@ -3740,6 +3740,11 @@
   function showGate() {
     if (!gateEl) return;
     gateEl.hidden = !gateNeeded();
+    /* if the last attempt failed, say why on the screen you are looking at */
+    if (!gateEl.hidden && gateErr && state.google.lastError && !state.google.connected) {
+      gateErr.textContent = state.google.lastError;
+      gateErr.hidden = false;
+    }
   }
 
   const acctConnectBtn = document.getElementById('acctConnect');
@@ -3770,7 +3775,7 @@
             gateEl.hidden = true;
             render();
           } else {
-            gateErr.textContent = 'Google did not finish connecting. Try again.';
+            gateErr.textContent = state.google.lastError || 'Google did not finish connecting. Try again.';
             gateErr.hidden = false;
           }
         } catch (err) {

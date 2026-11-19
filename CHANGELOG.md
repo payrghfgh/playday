@@ -2,6 +2,12 @@
 
 Every stage this thing went through, in order. Dates are when the build happened.
 
+## v3.0.3 — the sign-in gate says why it failed
+- `googleSyncNow` records the failure in `state.google.lastError`; the gate now shows that instead of a
+  generic "did not finish connecting", and repeats it when you come back to the gate.
+- So `origin_mismatch`, a blocked popup, a disabled API or a blocked Google script each read as
+  themselves on the screen you are looking at.
+
 ## v3.0.2 — docs lead with publishing, not test users
 - README and the Google panel now say **publish the app** (Auth Platform → Audience) as the way to open
   it up, with *Testing* described as the 100-user alternative rather than the default.
